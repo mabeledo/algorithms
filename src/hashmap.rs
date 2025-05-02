@@ -15,9 +15,9 @@ impl<K, V> Entry<K, V> {
             deleted: false,
         }
     }
-
+    
     fn is_empty(&self) -> bool {
-        self.key.is_none() && !self.deleted
+        self.deleted || self.key.is_none()
     }
 }
 
@@ -62,6 +62,47 @@ where
         hash & mask
     }
 
+    fn probe_next(&self, slot: usize) -> usize {
+        (slot + 1) & (self.capacity - 1)
+    }
+
+    /// Find an entry in the map.
+    /// This will either return:
+    ///   * an effectively free slot, either marked as deleted or actually vacant, or
+    ///   * the slot where the entry currently lives, or
+    ///   * None, if there aren't any more slots available.
+    /// # Arguments
+    /// * `key` - The key to look up
+    /// # Returns
+     /// * `Option<&V>` - Returns `Some(&V)` if the key exists, or `None` if it doesn't
+    fn find_entry(&self, key: &K) -> Option<usize> {
+        let mut slot = self.find_slot(key);
+        for _ in 0..self.capacity {
+            let entry = &self.entries[slot];
+            if entry.is_empty() || entry.key.as_ref().unwrap() == key {
+                // Slot is available or contains the key we're looking for.
+                return Some(slot);
+            }
+
+            slot = self.probe_next(slot);
+        }
+        None
+    }
+
+    /// Doubles the capacity of the hash map and rehashes all existing entries.
+    fn resize(&mut self) {
+        let new_capacity = self.capacity * 2;
+        let mut hashmap: HashMap<K, V> = HashMap::new(new_capacity);
+
+        for entry in self.entries.iter() {
+            if !entry.deleted && entry.key.is_some() {
+                hashmap.insert(entry.key.clone().unwrap(), entry.value.clone().unwrap());
+            }
+        }
+
+        *self = hashmap;
+    }
+
     /// Inserts a key-value pair into the hash map.
     ///
     /// If there was no key present in the slot the value is being inserted at, `None` is returned.
@@ -78,35 +119,42 @@ where
         if (self.size + 1) > ((self.capacity * 3) / 4) {
             self.resize();
         }
-        
+
         // Find the slot.
-        let slot = self.find_slot(&key);
+        let slot = self.find_entry(&key).expect("Out of slots.");
         let entry = &mut self.entries[slot];
-        
-        if entry.key.is_none() {
+
+        if entry.deleted || entry.key.is_none() {
             // There is nothing here, let's insert.
             self.size += 1;
             entry.key = Some(key);
             entry.value = Some(value);
+            entry.deleted = false;
             None
         } else {
-            let previous_value = entry.value.replace(value);
-            previous_value
+            // There is already something here. Replace the value and return the old one.
+            entry.value.replace(value)
         }
     }
 
-    /// Doubles the capacity of the hash map and rehashes all existing entries.
-    fn resize(&mut self) {
-        let new_capacity = self.capacity * 2;
-        let mut hashmap: HashMap<K, V> = HashMap::new(new_capacity);
-        
-        for entry in self.entries.iter() {
-            if !entry.is_empty() && entry.deleted == false {
-                hashmap.insert(entry.key.clone().unwrap(), entry.value.clone().unwrap());
-            }
+    // Retrieves a reference to the value associated with the given key.
+    ///
+    /// # Arguments
+    /// * `key` - The key to look up
+    ///
+    /// # Returns
+    /// * `Option<&V>` - Returns `Some(&V)` if the key exists, or `None` if it doesn't
+    fn get(&self, key: &K) -> Option<&V> {
+        match self.find_entry(key) {
+            Some(slot) => {
+                let entry = &self.entries[slot];
+                if entry.is_empty() {
+                    return None;
+                }
+                entry.value.as_ref()
+            },
+            None => None
         }
-        
-        *self = hashmap;
     }
 }
 
